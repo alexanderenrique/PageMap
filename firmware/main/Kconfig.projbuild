@@ -1,0 +1,27 @@
+menu "PageMap"
+
+    config ESP_READER_DEFAULT_DOC_PATH
+        string "Default document scan path"
+        default "/sdcard/documents"
+        help
+            Root directory on SD card containing packaged documents.
+
+    config ESP_READER_TILE_CACHE_BUDGET
+        int "Tile cache budget (tiles)"
+        default 24
+        range 4 128
+        help
+            Maximum number of decoded RGB565 tiles kept in LRU cache.
+
+    config ESP_READER_DEBUG_OVERLAY
+        bool "Enable debug overlay by default"
+        default n
+        help
+            Show decode/SD/cache metrics overlay on reader screen.
+
+    config ESP_READER_PROGRESS_DEBOUNCE_MS
+        int "Progress save debounce (ms)"
+        default 2000
+        range 500 30000
+
+endmenu

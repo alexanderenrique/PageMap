@@ -1,0 +1,33 @@
+# PageMap
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+converter/.venv/
+
+# ESP-IDF / PlatformIO
+firmware/build/
+firmware/.pio/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock
+firmware/managed_components/
+
+# Packages / local SD mirrors (generated)
+packages/
+*.pkg/
+processed-docs/
+unprocessed-docs/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+
+# Large local PDFs (keep out of git by default)
+*.pdf
+!converter/fixtures/*.pdf

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pagemap.local/schemas/page-v1.schema.json",
+  "title": "esp-docpack page v1",
+  "type": "object",
+  "required": [
+    "page_number",
+    "master_width",
+    "master_height",
+    "content_box",
+    "thumbnail",
+    "levels"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "page_number": { "type": "integer", "minimum": 1 },
+    "master_width": { "type": "integer", "minimum": 1 },
+    "master_height": { "type": "integer", "minimum": 1 },
+    "content_box": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "type": "integer" }
+    },
+    "thumbnail": { "type": "string", "minLength": 1 },
+    "levels": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "width",
+          "height",
+          "columns",
+          "rows",
+          "scale_from_master",
+          "path"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^z[0-9]+$" },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "columns": { "type": "integer", "minimum": 1 },
+          "rows": { "type": "integer", "minimum": 1 },
+          "scale_from_master": { "type": "number", "exclusiveMinimum": 0 },
+          "path": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
