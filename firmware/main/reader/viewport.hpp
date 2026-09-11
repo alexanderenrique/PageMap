@@ -57,6 +57,8 @@ public:
     void previous_view(float step_fraction = 0.85f);
 
     const ViewportState &state() const { return state_; }
+    int width() const { return viewport_w_; }
+    int height() const { return viewport_h_; }
     float page_width() const { return page_w_; }
     float page_height() const { return page_h_; }
     int page_count_hint() const { return page_count_; }

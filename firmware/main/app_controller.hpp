@@ -24,6 +24,7 @@ enum class AppCommandType : uint8_t {
     NextView,
     PreviousView,
     SetFitMode,
+    SetReadingOrientation,
     SetZoom,
     PanBy,
     SetBrightness,
@@ -37,6 +38,7 @@ struct AppCommand {
     char document_id[128] = {};
     int page_index = 0;
     reader::FitMode fit_mode = reader::FitMode::Width;
+    ReadingOrientation orientation = ReadingOrientation::Landscape;
     float scale = 1.0f;
     float focal_doc_x = 0.0f;
     float focal_doc_y = 0.0f;
@@ -52,9 +54,12 @@ class AppController {
 public:
     using LibraryRefreshCb = std::function<void()>;
     using ReaderRefreshCb = std::function<void()>;
+    using ReaderPanCb = std::function<void()>;
+    using OrientationCb = std::function<void()>;
 
     esp_err_t init(const AppConfig &cfg);
-    void set_callbacks(LibraryRefreshCb lib_cb, ReaderRefreshCb reader_cb);
+    void set_callbacks(LibraryRefreshCb lib_cb, ReaderRefreshCb reader_cb, ReaderPanCb pan_cb = {},
+                       OrientationCb orientation_cb = {});
 
     esp_err_t post(const AppCommand &cmd);
     void post_open_document(const std::string &id);
@@ -63,6 +68,7 @@ public:
     void post_next_view();
     void post_previous_view();
     void post_set_fit_mode(reader::FitMode mode);
+    void post_set_reading_orientation(ReadingOrientation orientation);
     void post_set_zoom(float scale, float focal_doc_x, float focal_doc_y, int focal_screen_x,
                        int focal_screen_y);
     void post_pan_by(float dx, float dy);
@@ -104,6 +110,8 @@ private:
     uint32_t active_doc_hash_ = 0;
     LibraryRefreshCb library_cb_;
     ReaderRefreshCb reader_cb_;
+    ReaderPanCb reader_pan_cb_;
+    OrientationCb orientation_cb_;
 };
 
 AppController &app_controller();

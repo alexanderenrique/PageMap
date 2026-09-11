@@ -61,11 +61,15 @@ esp_err_t display_port_init(DisplayHandles *out)
 
     ESP_RETURN_ON_ERROR(init_rgb_panel(&s_panel), TAG, "rgb panel");
 
+    // Software rotation is incompatible with direct_mode / avoid_tearing (those draw
+    // into the physical 800x480 RGB framebuffers). Partial PSRAM buffers + bounce
+    // mode keep the RGB pipeline fed while LVGL rotates into the panel FB.
+    const uint32_t partial_lines = 60;
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = nullptr,
         .panel_handle = s_panel,
         .control_handle = nullptr,
-        .buffer_size = static_cast<uint32_t>(board::LCD_H_RES * board::LCD_V_RES),
+        .buffer_size = static_cast<uint32_t>(board::LCD_H_RES * partial_lines),
         .double_buffer = true,
         .trans_size = 0,
         .hres = board::LCD_H_RES,
@@ -82,13 +86,10 @@ esp_err_t display_port_init(DisplayHandles *out)
             {
                 .buff_dma = false,
                 .buff_spiram = true,
-                .sw_rotate = false,
+                .sw_rotate = true,
                 .swap_bytes = false,
                 .full_refresh = false,
-                // Direct + avoid_tearing: draw into the idle RGB FB and swap on VSYNC.
-                // Partial mode with avoid_tearing writes dirty strips into the scanned
-                // framebuffer and shows up as blurry blobs along the top of the panel.
-                .direct_mode = true,
+                .direct_mode = false,
             },
     };
 
@@ -96,7 +97,7 @@ esp_err_t display_port_init(DisplayHandles *out)
         .flags =
             {
                 .bb_mode = true,
-                .avoid_tearing = true,
+                .avoid_tearing = false,
             },
     };
 
@@ -110,8 +111,8 @@ esp_err_t display_port_init(DisplayHandles *out)
         out->panel = s_panel;
         out->lv_display = s_lv_display;
     }
-    ESP_LOGI(TAG, "display initialized %dx%d (direct+vsync, bounce=%d lines)",
-             board::LCD_H_RES, board::LCD_V_RES, 20);
+    ESP_LOGI(TAG, "display initialized %dx%d (sw_rotate, bounce=%d lines, partial=%u)",
+             board::LCD_H_RES, board::LCD_V_RES, 20, (unsigned)partial_lines);
     return ESP_OK;
 }
 
@@ -123,6 +124,39 @@ void display_port_deinit()
         s_panel = nullptr;
     }
     s_lv_display = nullptr;
+}
+
+lv_display_t *display_lv_display()
+{
+    return s_lv_display;
+}
+
+void display_port_set_portrait(bool portrait)
+{
+    if (!s_lv_display) {
+        return;
+    }
+    const lv_display_rotation_t rot =
+        portrait ? LV_DISPLAY_ROTATION_90 : LV_DISPLAY_ROTATION_0;
+    lv_display_set_rotation(s_lv_display, rot);
+    ESP_LOGI(TAG, "orientation %s (%dx%d)", portrait ? "portrait" : "landscape",
+             display_logical_width(), display_logical_height());
+}
+
+int display_logical_width()
+{
+    if (!s_lv_display) {
+        return board::LCD_H_RES;
+    }
+    return lv_display_get_horizontal_resolution(s_lv_display);
+}
+
+int display_logical_height()
+{
+    if (!s_lv_display) {
+        return board::LCD_V_RES;
+    }
+    return lv_display_get_vertical_resolution(s_lv_display);
 }
 
 }  // namespace hw

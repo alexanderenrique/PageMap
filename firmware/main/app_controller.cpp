@@ -24,7 +24,8 @@ esp_err_t AppController::init(const AppConfig &cfg)
     hw::backlight().set_brightness_percent(cfg.brightness_percent);
 
     tile_cache_.set_budget(CONFIG_ESP_READER_TILE_CACHE_BUDGET);
-    viewport_.set_viewport_size(board::READER_VIEWPORT_W, board::READER_VIEWPORT_H);
+    const bool portrait = cfg.orientation == ReadingOrientation::Portrait;
+    viewport_.set_viewport_size(board::logical_hor_res(portrait), board::logical_ver_res(portrait));
 
     cmd_queue_ = xQueueCreate(16, sizeof(AppCommand));
     if (!cmd_queue_) {
@@ -43,10 +44,13 @@ esp_err_t AppController::init(const AppConfig &cfg)
     return ESP_OK;
 }
 
-void AppController::set_callbacks(LibraryRefreshCb lib_cb, ReaderRefreshCb reader_cb)
+void AppController::set_callbacks(LibraryRefreshCb lib_cb, ReaderRefreshCb reader_cb, ReaderPanCb pan_cb,
+                                 OrientationCb orientation_cb)
 {
     library_cb_ = std::move(lib_cb);
     reader_cb_ = std::move(reader_cb);
+    reader_pan_cb_ = std::move(pan_cb);
+    orientation_cb_ = std::move(orientation_cb);
 }
 
 esp_err_t AppController::post(const AppCommand &cmd)
@@ -91,6 +95,15 @@ void AppController::post_previous_view()
 void AppController::post_set_fit_mode(reader::FitMode mode)
 {
     AppCommand cmd{.type = AppCommandType::SetFitMode, .fit_mode = mode};
+    post(cmd);
+}
+
+void AppController::post_set_reading_orientation(ReadingOrientation orientation)
+{
+    AppCommand cmd{
+        .type = AppCommandType::SetReadingOrientation,
+        .orientation = orientation,
+    };
     post(cmd);
 }
 
@@ -156,26 +169,26 @@ void AppController::open_document_internal(const std::string &id)
     reader_open_ = true;
     chrome_visible_ = false;
 
-    docs::PageInfo page{};
-    active_model_->load_page(0, &page);
-
     docs::DocumentProgress prog{};
-    if (docs::progress_store_get(id, &prog) == ESP_OK) {
-        viewport_.set_page(prog.page_index, page.master_width, page.master_height, page.content_box);
+    const bool have_prog = docs::progress_store_get(id, &prog) == ESP_OK;
+    const int page_index = have_prog ? prog.page_index : 0;
+
+    docs::PageInfo page{};
+    if (active_model_->load_page(page_index, &page) != ESP_OK) {
+        active_model_->load_page(0, &page);
+    }
+
+    if (have_prog) {
+        viewport_.set_page(page_index, page.master_width, page.master_height, page.content_box);
         viewport_.set_fit_mode(prog.fit_mode);
         if (prog.fit_mode == reader::FitMode::Manual) {
             viewport_.set_manual_scale(prog.manual_scale, prog.norm_x * page.master_width,
-                                       prog.norm_y * page.master_height, board::LCD_H_RES / 2,
-                                       board::LCD_V_RES / 2);
+                                       prog.norm_y * page.master_height, viewport_.width() / 2,
+                                       viewport_.height() / 2);
         }
     } else {
         viewport_.set_fit_mode(config_.default_fit_mode);
-        viewport_.set_page(0, page.master_width, page.master_height, page.content_box);
-        if (config_.default_fit_mode == reader::FitMode::Page) {
-            viewport_.apply_fit_page();
-        } else {
-            viewport_.apply_fit_width(true);
-        }
+        viewport_.set_page(page_index, page.master_width, page.master_height, page.content_box);
     }
 
     viewport_.set_page_count(entry->manifest.page_count);
@@ -244,7 +257,7 @@ void AppController::reload_current_page_geometry()
                        page.content_box);
     if (mode == reader::FitMode::Manual) {
         // Keep scale; re-clamp with new page size.
-        viewport_.set_manual_scale(prev_scale, page.master_width * 0.5f, 0.0f, board::LCD_H_RES / 2,
+        viewport_.set_manual_scale(prev_scale, page.master_width * 0.5f, 0.0f, viewport_.width() / 2,
                                    0);
     }
     tile_manager_.set_page_info(page);
@@ -314,6 +327,28 @@ void AppController::handle_command(const AppCommand &cmd)
             }
         }
         break;
+    case AppCommandType::SetReadingOrientation: {
+        if (config_.orientation == cmd.orientation) {
+            break;
+        }
+        config_.orientation = cmd.orientation;
+        config_save_orientation(cmd.orientation);
+        const bool portrait = cmd.orientation == ReadingOrientation::Portrait;
+        viewport_.set_viewport_size(board::logical_hor_res(portrait),
+                                    board::logical_ver_res(portrait));
+        if (reader_open_) {
+            tile_manager_.invalidate_generation();
+            save_progress_internal();
+        }
+        if (orientation_cb_) {
+            orientation_cb_();
+        } else if (reader_open_ && reader_cb_) {
+            reader_cb_();
+        } else if (library_cb_) {
+            library_cb_();
+        }
+        break;
+    }
     case AppCommandType::SetZoom:
         if (reader_open_) {
             viewport_.set_manual_scale(cmd.scale, cmd.focal_doc_x, cmd.focal_doc_y,
@@ -327,8 +362,9 @@ void AppController::handle_command(const AppCommand &cmd)
     case AppCommandType::PanBy:
         if (reader_open_) {
             viewport_.pan_by(cmd.pan_dx, cmd.pan_dy);
-            if (reader_cb_) {
-                reader_cb_();
+            // Canvas-only invalidate — never full screen_reader_refresh mid-pan.
+            if (reader_pan_cb_) {
+                reader_pan_cb_();
             }
         }
         break;
@@ -364,6 +400,14 @@ void AppController::process_commands()
 {
     AppCommand cmd{};
     while (cmd_queue_ && xQueueReceive(cmd_queue_, &cmd, 0) == pdTRUE) {
+        if (cmd.type == AppCommandType::PanBy) {
+            AppCommand next{};
+            while (xQueuePeek(cmd_queue_, &next, 0) == pdTRUE && next.type == AppCommandType::PanBy) {
+                xQueueReceive(cmd_queue_, &next, 0);
+                cmd.pan_dx += next.pan_dx;
+                cmd.pan_dy += next.pan_dy;
+            }
+        }
         handle_command(cmd);
     }
 }
@@ -373,6 +417,16 @@ void AppController::controller_task_loop()
     for (;;) {
         AppCommand cmd{};
         if (xQueueReceive(cmd_queue_, &cmd, portMAX_DELAY) == pdTRUE) {
+            // Coalesce queued pan deltas so rapid touch samples become one viewport update.
+            if (cmd.type == AppCommandType::PanBy) {
+                AppCommand next{};
+                while (xQueuePeek(cmd_queue_, &next, 0) == pdTRUE &&
+                       next.type == AppCommandType::PanBy) {
+                    xQueueReceive(cmd_queue_, &next, 0);
+                    cmd.pan_dx += next.pan_dx;
+                    cmd.pan_dy += next.pan_dy;
+                }
+            }
             handle_command(cmd);
         }
     }

@@ -5,5 +5,6 @@
 namespace ui {
 
 void panel_quick_settings_show(app::AppController *controller);
+void panel_quick_settings_close();
 
 }  // namespace ui

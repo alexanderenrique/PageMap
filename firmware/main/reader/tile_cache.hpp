@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace reader {
@@ -29,7 +30,10 @@ public:
 
     void set_budget(size_t budget_tiles);
     std::shared_ptr<DecodedTile> find(const TileKey &key);
+    bool contains(const TileKey &key) const;
     void insert(std::shared_ptr<DecodedTile> tile);
+    // Visible tiles must survive prefetch/other inserts; cache may grow past budget.
+    void set_pinned_keys(const std::vector<TileKey> &keys);
     void clear();
     void invalidate_document(uint32_t doc_hash);
 
@@ -48,6 +52,7 @@ private:
     std::list<TileKey> lru_;
     std::unordered_map<TileKey, std::list<TileKey>::iterator, TileKeyHash> lru_index_;
     std::unordered_map<TileKey, std::shared_ptr<DecodedTile>, TileKeyHash> map_;
+    std::unordered_set<TileKey, TileKeyHash> pinned_keys_;
 };
 
 extern TileCache *g_tile_cache_for_debug;

@@ -39,6 +39,20 @@ std::shared_ptr<DecodedTile> TileCache::find(const TileKey &key)
     return it->second;
 }
 
+bool TileCache::contains(const TileKey &key) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return map_.count(key) != 0;
+}
+
+void TileCache::set_pinned_keys(const std::vector<TileKey> &keys)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    pinned_keys_.clear();
+    pinned_keys_.insert(keys.begin(), keys.end());
+    evict_if_needed();
+}
+
 void TileCache::insert(std::shared_ptr<DecodedTile> tile)
 {
     if (!tile) {
@@ -64,6 +78,7 @@ void TileCache::clear()
     map_.clear();
     lru_.clear();
     lru_index_.clear();
+    pinned_keys_.clear();
 }
 
 void TileCache::invalidate_document(uint32_t doc_hash)
@@ -73,6 +88,7 @@ void TileCache::invalidate_document(uint32_t doc_hash)
         if (it->first.doc_hash == doc_hash) {
             lru_index_.erase(it->first);
             lru_.remove(it->first);
+            pinned_keys_.erase(it->first);
             it = map_.erase(it);
         } else {
             ++it;
@@ -89,8 +105,20 @@ size_t TileCache::size() const
 void TileCache::evict_if_needed()
 {
     while (map_.size() > budget_ && !lru_.empty()) {
-        TileKey victim = lru_.back();
-        lru_.pop_back();
+        auto it = lru_.end();
+        bool found = false;
+        while (it != lru_.begin()) {
+            --it;
+            if (pinned_keys_.count(*it) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            break;
+        }
+        TileKey victim = *it;
+        lru_.erase(it);
         lru_index_.erase(victim);
         map_.erase(victim);
     }

@@ -32,7 +32,17 @@ esp_err_t config_load(AppConfig *cfg)
 
     int32_t fit = static_cast<int32_t>(cfg->default_fit_mode);
     nvs_get_i32(h, "fit_mode", &fit);
+    if (fit != static_cast<int32_t>(reader::FitMode::Page) &&
+        fit != static_cast<int32_t>(reader::FitMode::Width)) {
+        fit = static_cast<int32_t>(reader::FitMode::Width);
+    }
     cfg->default_fit_mode = static_cast<reader::FitMode>(fit);
+
+    uint8_t orient = static_cast<uint8_t>(cfg->orientation);
+    nvs_get_u8(h, "orient", &orient);
+    cfg->orientation = (orient == static_cast<uint8_t>(ReadingOrientation::Portrait))
+                           ? ReadingOrientation::Portrait
+                           : ReadingOrientation::Landscape;
 
     uint8_t dbg = cfg->debug_overlay ? 1 : 0;
     nvs_get_u8(h, "debug_ov", &dbg);
@@ -62,6 +72,8 @@ esp_err_t config_save(const AppConfig &cfg)
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_set_i32(h, "brightness", cfg.brightness_percent));
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_set_i32(h, "sleep_sec", cfg.sleep_timeout_sec));
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_set_i32(h, "fit_mode", static_cast<int32_t>(cfg.default_fit_mode)));
+    ESP_ERROR_CHECK_WITHOUT_ABORT(
+        nvs_set_u8(h, "orient", static_cast<uint8_t>(cfg.orientation)));
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_set_u8(h, "debug_ov", cfg.debug_overlay ? 1 : 0));
     if (!cfg.last_document_id.empty()) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_set_str(h, "last_doc", cfg.last_document_id.c_str()));
@@ -76,6 +88,30 @@ esp_err_t config_save_brightness(int percent)
     nvs_handle_t h;
     ESP_RETURN_ON_ERROR(nvs_open(NVS_NS, NVS_READWRITE, &h), "config", "open");
     esp_err_t err = nvs_set_i32(h, "brightness", percent);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_save_fit_mode(reader::FitMode mode)
+{
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NS, NVS_READWRITE, &h), "config", "open");
+    esp_err_t err = nvs_set_i32(h, "fit_mode", static_cast<int32_t>(mode));
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_save_orientation(ReadingOrientation orientation)
+{
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open(NVS_NS, NVS_READWRITE, &h), "config", "open");
+    esp_err_t err = nvs_set_u8(h, "orient", static_cast<uint8_t>(orientation));
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }

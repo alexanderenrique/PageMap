@@ -104,7 +104,7 @@ esp_err_t manifest_parse_file(const char *path, Manifest *out)
 
 bool manifest_validate(const Manifest &m)
 {
-    if (m.format_version != 1) {
+    if (m.format_version != 1 && m.format_version != 2) {
         ESP_LOGW(TAG, "unsupported format_version %d", m.format_version);
         return false;
     }

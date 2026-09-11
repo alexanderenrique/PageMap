@@ -50,8 +50,18 @@ constexpr int PIN_SD_MISO = 13;
 
 constexpr const char *SD_MOUNT_POINT = "/sdcard";
 
-// Reader viewport usable area (full screen; chrome overlays)
+// Physical panel is always 800x480. Logical size swaps in portrait.
 constexpr int READER_VIEWPORT_W = LCD_H_RES;
 constexpr int READER_VIEWPORT_H = LCD_V_RES;
+
+inline int logical_hor_res(bool portrait)
+{
+    return portrait ? LCD_V_RES : LCD_H_RES;
+}
+
+inline int logical_ver_res(bool portrait)
+{
+    return portrait ? LCD_H_RES : LCD_V_RES;
+}
 
 }  // namespace board

@@ -266,11 +266,15 @@ lv_obj_t *screen_library_create(app::AppController *controller)
     lv_obj_set_style_bg_color(scr, theme_color_bg(), 0);
     lv_obj_set_style_text_color(scr, theme_color_text(), 0);
     lv_obj_set_size(scr, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(scr, 0, 0);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *header = lv_obj_create(scr);
     style_reset(header);
     lv_obj_set_size(header, LV_PCT(100), 48);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_min_height(header, 48, 0);
+    lv_obj_set_flex_grow(header, 0);
     lv_obj_set_style_border_width(header, 1, 0);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_color(header, theme_color_border(), 0);
@@ -299,8 +303,8 @@ lv_obj_t *screen_library_create(app::AppController *controller)
 
     lv_obj_t *grid = lv_obj_create(scr);
     style_reset(grid);
-    lv_obj_set_size(grid, LV_PCT(100), 432);
-    lv_obj_align(grid, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_width(grid, LV_PCT(100));
+    lv_obj_set_flex_grow(grid, 1);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_all(grid, 20, 0);

@@ -9,7 +9,13 @@ void Viewport::set_viewport_size(int w, int h)
 {
     viewport_w_ = w;
     viewport_h_ = h;
-    clamp_pan();
+    if (state_.fit_mode == FitMode::Page) {
+        apply_fit_page();
+    } else if (state_.fit_mode == FitMode::Width) {
+        apply_fit_width(true);
+    } else {
+        clamp_pan();
+    }
 }
 
 void Viewport::set_page(int page_index, float page_w, float page_h, const float content_box[4])

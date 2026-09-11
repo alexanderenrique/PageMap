@@ -12,12 +12,29 @@ static const char *TAG = "doc_model";
 
 namespace docs {
 
+namespace {
+
+constexpr char kTilesMagic[4] = {'T', 'P', 'K', '1'};
+constexpr uint32_t kTilesBlobVersion = 1;
+
+}  // namespace
+
+void DocumentModel::clear_page_cache() const
+{
+    for (int i = 0; i < kPageCacheSlots; ++i) {
+        page_cache_[i].index = -1;
+        page_cache_[i].info = {};
+    }
+    page_cache_next_ = 0;
+}
+
 esp_err_t DocumentModel::load(const Manifest &manifest)
 {
     if (!manifest_validate(manifest)) {
         return ESP_ERR_INVALID_ARG;
     }
     manifest_ = manifest;
+    clear_page_cache();
     return ESP_OK;
 }
 
@@ -34,15 +51,65 @@ std::string DocumentModel::page_dir(int page_index) const
     return manifest_.package_root + "/" + rel;
 }
 
+esp_err_t DocumentModel::load_tiles_bin_index(const std::string &path, PageInfo *out)
+{
+    if (!out) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out->tile_offsets.clear();
+    out->tile_lengths.clear();
+
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) {
+        ESP_LOGW(TAG, "missing tiles.bin %s", path.c_str());
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    char magic[4] = {};
+    uint32_t version = 0;
+    uint32_t count = 0;
+    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, kTilesMagic, 4) != 0 ||
+        fread(&version, sizeof(version), 1, f) != 1 ||
+        fread(&count, sizeof(count), 1, f) != 1) {
+        fclose(f);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    if (version != kTilesBlobVersion || count > 100000) {
+        fclose(f);
+        ESP_LOGW(TAG, "bad tiles.bin header version=%u count=%u", version, count);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    out->tile_offsets.resize(count);
+    out->tile_lengths.resize(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t offset = 0;
+        uint32_t length = 0;
+        if (fread(&offset, sizeof(offset), 1, f) != 1 ||
+            fread(&length, sizeof(length), 1, f) != 1) {
+            fclose(f);
+            out->tile_offsets.clear();
+            out->tile_lengths.clear();
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+        out->tile_offsets[i] = offset;
+        out->tile_lengths[i] = length;
+    }
+    fclose(f);
+    return ESP_OK;
+}
+
 esp_err_t DocumentModel::load_page(int page_index, PageInfo *out) const
 {
     if (!out || page_index < 0 || page_index >= manifest_.page_count) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (cached_page_index_ == page_index) {
-        *out = cached_page_;
-        return ESP_OK;
+    for (int i = 0; i < kPageCacheSlots; ++i) {
+        if (page_cache_[i].index == page_index) {
+            *out = page_cache_[i].info;
+            return ESP_OK;
+        }
     }
 
     std::string path = manifest_.package_root + "/" + manifest_.page_json_paths[page_index];
@@ -76,6 +143,9 @@ esp_err_t DocumentModel::load_page(int page_index, PageInfo *out) const
     out->page_number = pn->valueint;
     out->master_width = mw->valueint;
     out->master_height = mh->valueint;
+    out->tiles_rel.clear();
+    out->tile_offsets.clear();
+    out->tile_lengths.clear();
 
     cJSON *cb = cJSON_GetObjectItem(root, "content_box");
     if (cJSON_IsArray(cb) && cJSON_GetArraySize(cb) == 4) {
@@ -89,6 +159,11 @@ esp_err_t DocumentModel::load_page(int page_index, PageInfo *out) const
         out->thumbnail_rel = thumb->valuestring;
     }
 
+    cJSON *tiles = cJSON_GetObjectItem(root, "tiles");
+    if (cJSON_IsString(tiles) && tiles->valuestring && tiles->valuestring[0]) {
+        out->tiles_rel = tiles->valuestring;
+    }
+
     out->levels.clear();
     cJSON *levels = cJSON_GetObjectItem(root, "levels");
     if (cJSON_IsArray(levels)) {
@@ -100,10 +175,9 @@ esp_err_t DocumentModel::load_page(int page_index, PageInfo *out) const
             cJSON *cols = cJSON_GetObjectItem(lv, "columns");
             cJSON *rows = cJSON_GetObjectItem(lv, "rows");
             cJSON *sfm = cJSON_GetObjectItem(lv, "scale_from_master");
-            cJSON *path = cJSON_GetObjectItem(lv, "path");
+            cJSON *path_tmpl = cJSON_GetObjectItem(lv, "path");
             if (!cJSON_IsString(id) || !cJSON_IsNumber(w) || !cJSON_IsNumber(h) ||
-                !cJSON_IsNumber(cols) || !cJSON_IsNumber(rows) || !cJSON_IsNumber(sfm) ||
-                !cJSON_IsString(path)) {
+                !cJSON_IsNumber(cols) || !cJSON_IsNumber(rows) || !cJSON_IsNumber(sfm)) {
                 continue;
             }
             PageLevel pl{};
@@ -113,14 +187,38 @@ esp_err_t DocumentModel::load_page(int page_index, PageInfo *out) const
             pl.columns = cols->valueint;
             pl.rows = rows->valueint;
             pl.scale_from_master = static_cast<float>(sfm->valuedouble);
-            pl.path_template = path->valuestring;
+            if (cJSON_IsString(path_tmpl)) {
+                pl.path_template = path_tmpl->valuestring;
+            }
             out->levels.push_back(pl);
         }
     }
 
     cJSON_Delete(root);
-    cached_page_index_ = page_index;
-    cached_page_ = *out;
+
+    if (!out->tiles_rel.empty()) {
+        const std::string blob = page_dir(page_index) + "/" + out->tiles_rel;
+        if (load_tiles_bin_index(blob, out) != ESP_OK) {
+            ESP_LOGW(TAG, "failed to index %s", blob.c_str());
+            out->tiles_rel.clear();
+            out->tile_offsets.clear();
+            out->tile_lengths.clear();
+        } else {
+            size_t expected = 0;
+            for (const auto &lv : out->levels) {
+                expected += static_cast<size_t>(lv.columns) * static_cast<size_t>(lv.rows);
+            }
+            if (out->tile_offsets.size() != expected) {
+                ESP_LOGW(TAG, "tiles.bin count %u != expected %u for page %d",
+                         static_cast<unsigned>(out->tile_offsets.size()),
+                         static_cast<unsigned>(expected), page_index);
+            }
+        }
+    }
+
+    page_cache_[page_cache_next_].index = page_index;
+    page_cache_[page_cache_next_].info = *out;
+    page_cache_next_ = (page_cache_next_ + 1) % kPageCacheSlots;
     return ESP_OK;
 }
 
@@ -149,6 +247,42 @@ int DocumentModel::select_level_for_scale(float display_scale, const PageInfo &p
     return best;
 }
 
+int DocumentModel::linear_tile_index(const PageInfo &page, int level_index, int col, int row)
+{
+    if (level_index < 0 || level_index >= static_cast<int>(page.levels.size())) {
+        return -1;
+    }
+    int index = 0;
+    for (int i = 0; i < level_index; ++i) {
+        index += page.levels[i].columns * page.levels[i].rows;
+    }
+    const PageLevel &lv = page.levels[level_index];
+    if (col < 0 || row < 0 || col >= lv.columns || row >= lv.rows) {
+        return -1;
+    }
+    return index + row * lv.columns + col;
+}
+
+TileSpan DocumentModel::resolve_tile_span(const PageInfo &page, int page_index, int level_index,
+                                          int col, int row) const
+{
+    TileSpan span{};
+    if (!page.tiles_rel.empty() && !page.tile_offsets.empty()) {
+        const int idx = linear_tile_index(page, level_index, col, row);
+        if (idx < 0 || idx >= static_cast<int>(page.tile_offsets.size())) {
+            return span;
+        }
+        span.path = page_dir(page_index) + "/" + page.tiles_rel;
+        span.offset = page.tile_offsets[static_cast<size_t>(idx)];
+        span.length = page.tile_lengths[static_cast<size_t>(idx)];
+        return span;
+    }
+    span.path = build_tile_path(page, page_index, level_index, col, row);
+    span.offset = 0;
+    span.length = 0;
+    return span;
+}
+
 std::string DocumentModel::build_tile_path(const PageInfo &page, int page_index, int level_index,
                                           int col, int row) const
 {
@@ -157,6 +291,9 @@ std::string DocumentModel::build_tile_path(const PageInfo &page, int page_index,
     }
 
     const PageLevel &lv = page.levels[level_index];
+    if (lv.path_template.empty()) {
+        return {};
+    }
     std::string rel = lv.path_template;
     auto replace_token = [&](const char *token, int value) {
         char buf[16];

@@ -7,10 +7,16 @@
 
 namespace app {
 
+enum class ReadingOrientation : uint8_t {
+    Landscape = 0,
+    Portrait = 1,
+};
+
 struct AppConfig {
     int brightness_percent = 80;
     int sleep_timeout_sec = 300;
     reader::FitMode default_fit_mode = reader::FitMode::Width;
+    ReadingOrientation orientation = ReadingOrientation::Landscape;
     bool debug_overlay = false;
     std::string last_document_id;
 };
@@ -18,6 +24,8 @@ struct AppConfig {
 esp_err_t config_load(AppConfig *cfg);
 esp_err_t config_save(const AppConfig &cfg);
 esp_err_t config_save_brightness(int percent);
+esp_err_t config_save_fit_mode(reader::FitMode mode);
+esp_err_t config_save_orientation(ReadingOrientation orientation);
 esp_err_t config_save_debug_overlay(bool enabled);
 
 }  // namespace app

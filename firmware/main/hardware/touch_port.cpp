@@ -55,6 +55,31 @@ static uint8_t probe_gt911_addr(i2c_master_bus_handle_t bus)
     return 0;
 }
 
+// Report rotation-0 (physical 800x480) samples. LVGL's indev_pointer_proc remaps
+// them with disp->rotation so widget hit-testing matches the rotated layout.
+static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    if (!s_touch) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    esp_lcd_touch_read_data(s_touch);
+    uint16_t x = 0;
+    uint16_t y = 0;
+    uint8_t cnt = 0;
+    const bool pressed = esp_lcd_touch_get_coordinates(s_touch, &x, &y, nullptr, &cnt, 1);
+    if (!pressed || cnt == 0) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    data->point.x = static_cast<int32_t>(x);
+    data->point.y = static_cast<int32_t>(y);
+    data->state = LV_INDEV_STATE_PRESSED;
+}
+
 static esp_err_t create_gt911(i2c_master_bus_handle_t bus, uint8_t addr, lv_display_t *display)
 {
     esp_lcd_panel_io_handle_t tp_io = nullptr;
@@ -97,12 +122,10 @@ static esp_err_t create_gt911(i2c_master_bus_handle_t bus, uint8_t addr, lv_disp
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "GT911 touch registered at 0x%02X indev=%p flags swap=%u mx=%u my=%u max=%ux%u",
-             addr, (void *)s_indev,
-             (unsigned)tp_cfg.flags.swap_xy,
-             (unsigned)tp_cfg.flags.mirror_x,
-             (unsigned)tp_cfg.flags.mirror_y,
-             (unsigned)tp_cfg.x_max, (unsigned)tp_cfg.y_max);
+    lv_indev_set_read_cb(s_indev, touch_read_cb);
+
+    ESP_LOGI(TAG, "GT911 touch registered at 0x%02X indev=%p max=%ux%u",
+             addr, (void *)s_indev, (unsigned)tp_cfg.x_max, (unsigned)tp_cfg.y_max);
     return ESP_OK;
 }
 
@@ -141,6 +164,13 @@ esp_lcd_touch_handle_t touch_handle()
 lv_indev_t *touch_indev()
 {
     return s_indev;
+}
+
+void touch_port_set_portrait(bool portrait)
+{
+    // LVGL remaps rotation-0 touch samples in indev_pointer_proc. Do not swap
+    // GT911 axes here or hit-testing will be transformed twice.
+    (void)portrait;
 }
 
 }  // namespace hw

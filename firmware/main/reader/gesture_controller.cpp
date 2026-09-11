@@ -1,5 +1,5 @@
 #include "gesture_controller.hpp"
-#include "board_config.hpp"
+#include "page_canvas.hpp"
 
 #include "esp_timer.h"
 
@@ -10,6 +10,7 @@ namespace reader {
 struct GestureCtx {
     Viewport *viewport = nullptr;
     app::AppController *controller = nullptr;
+    lv_obj_t *canvas = nullptr;
     int start_x = 0;
     int start_y = 0;
     int last_x = 0;
@@ -46,10 +47,14 @@ static void on_pressing(lv_event_t *e)
 
     if (!ctx->dragging && (std::abs(total_dx) > 12 || std::abs(total_dy) > 12)) {
         ctx->dragging = true;
+        page_canvas_set_dragging(ctx->canvas, true);
     }
 
-    if (ctx->dragging && ctx->controller) {
-        ctx->controller->post_pan_by(static_cast<float>(dx), static_cast<float>(dy));
+    // Apply pan on the LVGL thread: invalidate only the canvas (no chrome rebuild,
+    // no tile IO submit) so drag frames stay cheap.
+    if (ctx->dragging && ctx->viewport) {
+        ctx->viewport->pan_by(static_cast<float>(dx), static_cast<float>(dy));
+        page_canvas_invalidate(ctx->canvas);
     }
 
     ctx->last_x = p.x;
@@ -76,7 +81,7 @@ static void apply_double_tap_zoom(GestureCtx *ctx, int sx, int sy)
         const float target = std::min(fit * 2.5f, 4.0f);
         ctx->controller->post_set_zoom(target, doc_x, doc_y, sx, sy);
     } else {
-        ctx->controller->post_set_fit_mode(FitMode::Width);
+        ctx->controller->post_set_fit_mode(ctx->controller->config().default_fit_mode);
     }
 }
 
@@ -92,6 +97,10 @@ static void on_release(lv_event_t *e)
     const int total_dy = p.y - ctx->start_y;
 
     if (ctx->dragging) {
+        page_canvas_set_dragging(ctx->canvas, false);
+        // One full refresh after the gesture: submit visible/prefetch tile IO and
+        // redraw with filtered scaling restored.
+        page_canvas_refresh(ctx->canvas);
         return;
     }
 
@@ -114,18 +123,18 @@ static void on_release(lv_event_t *e)
     ctx->last_tap_x = p.x;
     ctx->last_tap_y = p.y;
 
-    const int edge = board::LCD_H_RES / 8;
+    const int edge = ctx->viewport->width() / 8;
     if (p.x < edge) {
         ctx->controller->post_previous_view();
         return;
     }
-    if (p.x > board::LCD_H_RES - edge) {
+    if (p.x > ctx->viewport->width() - edge) {
         ctx->controller->post_next_view();
         return;
     }
 
-    const int cx = board::LCD_H_RES / 2;
-    const int cy = board::LCD_V_RES / 2;
+    const int cx = ctx->viewport->width() / 2;
+    const int cy = ctx->viewport->height() / 2;
     const int safe_r = 120;
     if (std::abs(p.x - cx) < safe_r && std::abs(p.y - cy) < safe_r) {
         ctx->controller->post_toggle_chrome();
@@ -134,7 +143,7 @@ static void on_release(lv_event_t *e)
 
 void gesture_controller_attach(lv_obj_t *target, Viewport *viewport, app::AppController *controller)
 {
-    auto *ctx = new GestureCtx{.viewport = viewport, .controller = controller};
+    auto *ctx = new GestureCtx{.viewport = viewport, .controller = controller, .canvas = target};
     lv_obj_add_event_cb(target, on_press, LV_EVENT_PRESSED, ctx);
     lv_obj_add_event_cb(target, on_pressing, LV_EVENT_PRESSING, ctx);
     lv_obj_add_event_cb(target, on_release, LV_EVENT_RELEASED, ctx);

@@ -4,7 +4,6 @@
 #include "dialog_document_info.hpp"
 #include "dialog_go_to_page.hpp"
 #include "hardware/backlight.hpp"
-#include "hardware/board_config.hpp"
 #include "panel_quick_settings.hpp"
 #include "reader/gesture_controller.hpp"
 #include "reader/page_canvas.hpp"
@@ -64,8 +63,8 @@ static void on_brightness(lv_event_t *e)
 static void zoom_at_center(app::AppController *ctrl, float factor)
 {
     auto &vp = ctrl->viewport();
-    const int sx = board::LCD_H_RES / 2;
-    const int sy = board::LCD_V_RES / 2;
+    const int sx = vp.width() / 2;
+    const int sy = vp.height() / 2;
     float doc_x = 0, doc_y = 0;
     vp.screen_to_doc(static_cast<float>(sx), static_cast<float>(sy), &doc_x, &doc_y);
     const float scale = std::clamp(vp.state().display_scale * factor, 0.05f, 8.0f);
@@ -132,7 +131,8 @@ lv_obj_t *screen_reader_create(app::AppController *controller)
     ui->title_lbl = lv_label_create(ui->top_bar);
     lv_label_set_text(ui->title_lbl, "Document");
     lv_label_set_long_mode(ui->title_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(ui->title_lbl, 420);
+    const int hor = lv_display_get_horizontal_resolution(nullptr);
+    lv_obj_set_width(ui->title_lbl, std::max(80, hor - 200));
     lv_obj_align(ui->title_lbl, LV_ALIGN_CENTER, 0, 0);
 
     ui->page_lbl = lv_label_create(ui->top_bar);
@@ -151,54 +151,53 @@ lv_obj_t *screen_reader_create(app::AppController *controller)
     lv_obj_align(ui->bottom_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(ui->bottom_bar, theme_color_bg(), 0);
     lv_obj_set_style_border_width(ui->bottom_bar, 0, 0);
+    lv_obj_set_style_radius(ui->bottom_bar, 0, 0);
+    lv_obj_set_flex_flow(ui->bottom_bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(ui->bottom_bar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER,
+                         LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(ui->bottom_bar, 6, 0);
+    lv_obj_set_style_pad_column(ui->bottom_bar, 2, 0);
+    lv_obj_remove_flag(ui->bottom_bar, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *prev = lv_button_create(ui->bottom_bar);
-    lv_obj_align(prev, LV_ALIGN_LEFT_MID, 8, 0);
     lv_label_create(prev);
     lv_label_set_text(lv_obj_get_child(prev, 0), LV_SYMBOL_PREV);
     lv_obj_add_event_cb(prev, on_prev_page, LV_EVENT_CLICKED, controller);
 
-    lv_obj_t *next = lv_button_create(ui->bottom_bar);
-    lv_obj_align(next, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_label_create(next);
-    lv_label_set_text(lv_obj_get_child(next, 0), LV_SYMBOL_NEXT);
-    lv_obj_add_event_cb(next, on_next_page, LV_EVENT_CLICKED, controller);
-
     lv_obj_t *zoom_out = lv_button_create(ui->bottom_bar);
-    lv_obj_align(zoom_out, LV_ALIGN_CENTER, -140, 0);
     lv_label_create(zoom_out);
     lv_label_set_text(lv_obj_get_child(zoom_out, 0), LV_SYMBOL_MINUS);
     lv_obj_add_event_cb(zoom_out, on_zoom_out, LV_EVENT_CLICKED, controller);
 
     lv_obj_t *zoom_in = lv_button_create(ui->bottom_bar);
-    lv_obj_align(zoom_in, LV_ALIGN_CENTER, -100, 0);
     lv_label_create(zoom_in);
     lv_label_set_text(lv_obj_get_child(zoom_in, 0), LV_SYMBOL_PLUS);
     lv_obj_add_event_cb(zoom_in, on_zoom_in, LV_EVENT_CLICKED, controller);
 
     lv_obj_t *fit_w = lv_button_create(ui->bottom_bar);
-    lv_obj_align(fit_w, LV_ALIGN_CENTER, -40, 0);
     lv_label_create(fit_w);
     lv_label_set_text(lv_obj_get_child(fit_w, 0), "W");
     lv_obj_add_event_cb(fit_w, on_fit_width, LV_EVENT_CLICKED, controller);
 
     lv_obj_t *fit_p = lv_button_create(ui->bottom_bar);
-    lv_obj_align(fit_p, LV_ALIGN_CENTER, 10, 0);
     lv_label_create(fit_p);
     lv_label_set_text(lv_obj_get_child(fit_p, 0), "P");
     lv_obj_add_event_cb(fit_p, on_fit_page, LV_EVENT_CLICKED, controller);
 
     lv_obj_t *goto_btn = lv_button_create(ui->bottom_bar);
-    lv_obj_align(goto_btn, LV_ALIGN_CENTER, 60, 0);
     lv_label_create(goto_btn);
     lv_label_set_text(lv_obj_get_child(goto_btn, 0), "#");
     lv_obj_add_event_cb(goto_btn, on_goto_page, LV_EVENT_CLICKED, controller);
 
     lv_obj_t *bright = lv_button_create(ui->bottom_bar);
-    lv_obj_align(bright, LV_ALIGN_CENTER, 110, 0);
     lv_label_create(bright);
     lv_label_set_text(lv_obj_get_child(bright, 0), LV_SYMBOL_IMAGE);
     lv_obj_add_event_cb(bright, on_brightness, LV_EVENT_CLICKED, controller);
+
+    lv_obj_t *next = lv_button_create(ui->bottom_bar);
+    lv_label_create(next);
+    lv_label_set_text(lv_obj_get_child(next, 0), LV_SYMBOL_NEXT);
+    lv_obj_add_event_cb(next, on_next_page, LV_EVENT_CLICKED, controller);
 
     if (controller->config().debug_overlay) {
         ui->debug_lbl = diag::debug_overlay_create(scr);
@@ -249,6 +248,17 @@ void screen_reader_refresh(lv_obj_t *screen, app::AppController *controller)
 
     if (ui->debug_lbl) {
         diag::debug_overlay_update(ui->debug_lbl);
+    }
+}
+
+void screen_reader_invalidate_canvas(lv_obj_t *screen)
+{
+    if (!screen) {
+        return;
+    }
+    auto *ui = static_cast<ReaderUi *>(lv_obj_get_user_data(screen));
+    if (ui && ui->canvas) {
+        reader::page_canvas_invalidate(ui->canvas);
     }
 }
 

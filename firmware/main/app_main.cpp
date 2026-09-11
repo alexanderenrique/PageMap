@@ -10,6 +10,7 @@
 #include "reader/tile_cache.hpp"
 #include "reader/tile_manager.hpp"
 #include "diagnostics/ui_debug.hpp"
+#include "ui/panel_quick_settings.hpp"
 #include "ui/screen_library.hpp"
 #include "ui/screen_reader.hpp"
 #include "ui/theme.hpp"
@@ -87,6 +88,42 @@ void show_reader(app::AppController &ctrl)
     ESP_READER_LV_UNLOCK();
 }
 
+void apply_display_orientation(const app::AppConfig &cfg)
+{
+    const bool portrait = cfg.orientation == app::ReadingOrientation::Portrait;
+    hw::display_port_set_portrait(portrait);
+    hw::touch_port_set_portrait(portrait);
+}
+
+void recreate_ui_for_orientation()
+{
+    app::AppController &ctrl = app::app_controller();
+    ESP_READER_LV_LOCK();
+    ui::panel_quick_settings_close();
+    apply_display_orientation(ctrl.config());
+
+    lv_obj_t *old_lib = g_library_screen;
+    lv_obj_t *old_reader = g_reader_screen;
+    g_library_screen = nullptr;
+    g_reader_screen = nullptr;
+
+    if (ctrl.reader_open()) {
+        g_reader_screen = ui::screen_reader_create(&ctrl);
+        lv_screen_load(g_reader_screen);
+    } else {
+        g_library_screen = ui::screen_library_create(&ctrl);
+        lv_screen_load(g_library_screen);
+    }
+
+    if (old_lib) {
+        lv_obj_delete(old_lib);
+    }
+    if (old_reader) {
+        lv_obj_delete(old_reader);
+    }
+    ESP_READER_LV_UNLOCK();
+}
+
 void on_library_refresh()
 {
     show_library(app::app_controller());
@@ -105,6 +142,16 @@ void on_reader_refresh()
     } else {
         show_reader(ctrl);
     }
+    ESP_READER_LV_UNLOCK();
+}
+
+void on_reader_pan()
+{
+    if (!g_reader_screen) {
+        return;
+    }
+    ESP_READER_LV_LOCK();
+    ui::screen_reader_invalidate_canvas(g_reader_screen);
     ESP_READER_LV_UNLOCK();
 }
 
@@ -138,6 +185,7 @@ extern "C" void app_main(void)  // NOLINT(readability-identifier-naming)
         ESP_LOGW(TAG, "Touch init failed (%s); continuing without touch", esp_err_to_name(err));
     }
     ESP_READER_LV_LOCK();
+    apply_display_orientation(cfg);
     diag::ui_debug_install(disp.lv_display, hw::touch_indev());
     ESP_READER_LV_UNLOCK();
 
@@ -163,7 +211,7 @@ extern "C" void app_main(void)  // NOLINT(readability-identifier-naming)
     g_tile_cache = &ctrl.tile_cache();
     reader::g_tile_cache_for_debug = g_tile_cache;
 
-    ctrl.set_callbacks(on_library_refresh, on_reader_refresh);
+    ctrl.set_callbacks(on_library_refresh, on_reader_refresh, on_reader_pan, recreate_ui_for_orientation);
 
     xTaskCreatePinnedToCore(app_controller_task, "app_ctrl", 16384, &ctrl, 5, nullptr, 1);
 
